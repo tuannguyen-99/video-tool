@@ -90,6 +90,7 @@ class JobManager:
         target_lang: str,
         burn_subtitles: bool,
         mix_music_volume: float,
+        resolution: Optional[str] = None,
     ) -> List[str]:
         job_ids = []
         for url in urls:
@@ -98,6 +99,7 @@ class JobManager:
             self._job_args[job_id] = (
                 url, cookie_path, output_dir, music_path,
                 source_lang, target_lang, burn_subtitles, mix_music_volume,
+                resolution,
             )
             job_ids.append(job_id)
             self._queue.put_nowait(job_id)
@@ -148,6 +150,7 @@ class JobManager:
         target_lang: str,
         burn_subtitles: bool,
         mix_music_volume: float,
+        resolution: Optional[str] = None,
     ) -> None:
         work_dir = new_job_workdir(job_id)
         resolved_output_dir = output_dir.strip() if output_dir and output_dir.strip() else default_output_dir(job_id)
@@ -208,6 +211,7 @@ class JobManager:
                     srt_path=srt_path,
                     music_volume=mix_music_volume,
                     burn_subtitles=burn_subtitles,
+                    resolution=resolution,
                 )
             except Exception as e:
                 self._fail(job_id, StageName.EXPORT, e)

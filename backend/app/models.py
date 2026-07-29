@@ -51,3 +51,4 @@ class CreateBatchForm(BaseModel):
     target_lang: str = "vi"
     burn_subtitles: bool = True
     mix_music_volume: float = 0.15  # 0..1, relative volume of background music under TTS voice
+    resolution: str = "1080p"  # "720p" or "1080p" — output height, width scaled to preserve aspect ratio

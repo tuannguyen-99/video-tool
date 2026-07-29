@@ -1,4 +1,4 @@
-# Douyin → Vietsub Studio
+# Douyin → Vietsub Studio V2
 
 Công cụ local: tải video Douyin theo URL, chuyển giọng nói thành văn bản,
 dịch Trung → Việt, tạo giọng đọc tiếng Việt (TTS), gắn vietsub, và ghép
