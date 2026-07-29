@@ -22,6 +22,15 @@ class FfmpegError(Exception):
     pass
 
 
+# Target output heights for the resolution picker. Width is derived with
+# scale=-2:<height> so aspect ratio is preserved and the resulting width is
+# always even (required by libx264).
+RESOLUTIONS = {
+    "720p": 720,
+    "1080p": 1080,
+}
+
+
 async def _run(cmd: List[str]) -> None:
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -99,6 +108,7 @@ async def export_final(
     srt_path: Optional[str] = None,
     music_volume: float = 0.15,
     burn_subtitles: bool = True,
+    resolution: Optional[str] = None,
 ) -> str:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
@@ -112,21 +122,27 @@ async def export_final(
         filter_parts.append(f"[1:a][music]amix=inputs=2:duration=first:dropout_transition=0[aout]")
         audio_label = "[aout]"
 
-    video_filter = None
+    # Video filter chain: scale (if requested) then burn subtitles, in that
+    # order, so subtitle rendering happens at the final output resolution.
+    video_filters: List[str] = []
+    if resolution and resolution in RESOLUTIONS:
+        target_h = RESOLUTIONS[resolution]
+        video_filters.append(f"scale=-2:{target_h}")
+
     if burn_subtitles and srt_path:
         # Escape order matters: backslash first, then colon and single quote.
         # `filename=` must be explicit — passing the path as a bare positional
         # value (e.g. subtitles='path') trips newer ffmpeg's option parser
         # with "No option name near '<path>'".
         escaped = srt_path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        video_filter = f"subtitles=filename='{escaped}'"
+        video_filters.append(f"subtitles=filename='{escaped}'")
 
     cmd = ["ffmpeg", "-y", *inputs]
 
     fc_parts = list(filter_parts)
     map_video = "0:v"
-    if video_filter:
-        fc_parts.append(f"[0:v]{video_filter}[vout]")
+    if video_filters:
+        fc_parts.append(f"[0:v]{','.join(video_filters)}[vout]")
         map_video = "[vout]"
 
     if fc_parts:

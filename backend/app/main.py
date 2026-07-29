@@ -36,9 +36,13 @@ async def create_jobs(
     target_lang: str = Form("vi"),
     burn_subtitles: bool = Form(True),
     mix_music_volume: float = Form(0.15),
+    resolution: str = Form("1080p"),
     cookie_file: UploadFile = File(...),
     music_file: Optional[UploadFile] = File(None),
 ):
+    if resolution not in ("720p", "1080p"):
+        raise HTTPException(status_code=422, detail="resolution phải là '720p' hoặc '1080p'")
+
     batch_id = uuid.uuid4().hex[:10]
 
     cookie_path = save_upload(batch_id, cookie_file.filename or "cookies.txt", await cookie_file.read())
@@ -57,6 +61,7 @@ async def create_jobs(
         target_lang=target_lang,
         burn_subtitles=burn_subtitles,
         mix_music_volume=mix_music_volume,
+        resolution=resolution,
     )
 
     return BatchCreateResponse(batch_id=batch_id, job_ids=job_ids)

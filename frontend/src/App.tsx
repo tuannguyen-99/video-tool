@@ -11,6 +11,7 @@ import { connectJobSocket } from "./lib/ws";
 import { JobState } from "./types";
 
 const OUTPUT_DIR_STORAGE_KEY = "douyin-vietsub:outputDir";
+const RESOLUTION_STORAGE_KEY = "douyin-vietsub:resolution";
 
 export default function App() {
   const [urls, setUrls] = useState("");
@@ -25,6 +26,23 @@ export default function App() {
   });
   const [burnSubtitles, setBurnSubtitles] = useState(true);
   const [musicVolume, setMusicVolume] = useState(0.15);
+  const [resolution, setResolution] = useState<"720p" | "1080p">(() => {
+    try {
+      const saved = localStorage.getItem(RESOLUTION_STORAGE_KEY);
+      return saved === "720p" || saved === "1080p" ? saved : "1080p";
+    } catch {
+      return "1080p";
+    }
+  });
+
+  function handleResolutionChange(v: "720p" | "1080p") {
+    setResolution(v);
+    try {
+      localStorage.setItem(RESOLUTION_STORAGE_KEY, v);
+    } catch {
+      // localStorage unavailable — not critical, just skip persisting
+    }
+  }
 
   const [submitting, setSubmitting] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -77,6 +95,7 @@ export default function App() {
         musicFile,
         burnSubtitles,
         mixMusicVolume: musicVolume,
+        resolution,
       });
 
       setTrackedIds((prev) => new Set([...prev, ...res.job_ids]));
@@ -159,6 +178,29 @@ export default function App() {
             value={outputDir}
             onChange={handleOutputDirChange}
           />
+
+          <div className="grid gap-1.5">
+            <label className="text-sm font-medium text-ink-200">
+              Độ phân giải đầu ra
+            </label>
+            <div className="flex gap-2">
+              {(["720p", "1080p"] as const).map((res) => (
+                <button
+                  key={res}
+                  type="button"
+                  onClick={() => handleResolutionChange(res)}
+                  aria-pressed={resolution === res}
+                  className={`rounded border px-4 py-2 text-sm font-medium transition-colors ${
+                    resolution === res
+                      ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
+                      : "border-ink-700 bg-ink-800/40 text-ink-300 hover:border-ink-600"
+                  }`}
+                >
+                  {res}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <SubmitBar
             burnSubtitles={burnSubtitles}
