@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: "Inter", sans-serif;
+  color: theme("colors.ink.200");
+}
+
+::selection {
+  background: theme("colors.reel.amber");
+  color: theme("colors.ink.950");
+}
+
+.font-display {
+  letter-spacing: -0.01em;
+}

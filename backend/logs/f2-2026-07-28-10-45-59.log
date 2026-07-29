@@ -1,0 +1,15 @@
+2026-07-28 10:46:02,559 - f2 - INFO - 应用：douyin
+2026-07-28 10:46:02,559 - f2 - INFO - 应用：douyin
+2026-07-28 10:46:02,559 - f2 - INFO - 应用：douyin
+2026-07-28 10:46:02,569 - f2 - INFO - 模式：None
+2026-07-28 10:46:02,569 - f2 - INFO - 模式：None
+2026-07-28 10:46:02,569 - f2 - INFO - 主配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/.venv/lib/python3.12/site-packages/f2/conf/app.yaml
+2026-07-28 10:46:02,569 - f2 - INFO - 主配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/.venv/lib/python3.12/site-packages/f2/conf/app.yaml
+2026-07-28 10:46:02,569 - f2 - INFO - 模式：None
+2026-07-28 10:46:02,570 - f2 - INFO - 自定义配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/storage/jobs/7fadbaeaffa1/f2_config_c0ae649f.yaml
+2026-07-28 10:46:02,570 - f2 - INFO - 自定义配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/storage/jobs/d231f3ef374f/f2_config_90ab70b2.yaml
+2026-07-28 10:46:02,570 - f2 - INFO - 主配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/.venv/lib/python3.12/site-packages/f2/conf/app.yaml
+2026-07-28 10:46:02,570 - f2 - ERROR - DouYin CLI 缺乏必要参数：[cyan]mode[/cyan]。详情请查看帮助，[yellow]f2 douyin -h/--help[/yellow]
+2026-07-28 10:46:02,570 - f2 - ERROR - DouYin CLI 缺乏必要参数：[cyan]mode[/cyan]。详情请查看帮助，[yellow]f2 douyin -h/--help[/yellow]
+2026-07-28 10:46:02,570 - f2 - INFO - 自定义配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/storage/jobs/f13c116c1e8f/f2_config_95cdead2.yaml
+2026-07-28 10:46:02,571 - f2 - ERROR - DouYin CLI 缺乏必要参数：[cyan]mode[/cyan]。详情请查看帮助，[yellow]f2 douyin -h/--help[/yellow]

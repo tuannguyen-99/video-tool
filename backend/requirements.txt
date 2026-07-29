@@ -1,0 +1,21 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pydantic==2.9.2
+
+# Douyin downloader (High-speed downloader for multiple platforms)
+# https://github.com/Johnserf-Seed/f2
+f2>=0.0.1.6
+
+# Speech to text
+faster-whisper==1.0.3
+
+# Translation (zh -> vi)
+deep-translator==1.11.4
+
+# Vietnamese TTS — VieNeu-TTS (https://github.com/pnnbao97/VieNeu-TTS)
+# Minimal install is torch-free and runs v3 Turbo on CPU via ONNX Runtime.
+# For GPU (PyTorch engine + v1/v2 models): pip install "vieneu[gpu]"
+vieneu
+
+ffmpeg-python==0.2.0

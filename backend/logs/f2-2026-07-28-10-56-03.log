@@ -1,0 +1,33 @@
+2026-07-28 10:56:04,191 - f2 - INFO - 应用：douyin
+2026-07-28 10:56:04,191 - f2 - INFO - 应用：douyin
+2026-07-28 10:56:04,191 - f2 - INFO - 应用：douyin
+2026-07-28 10:56:04,199 - f2 - INFO - 模式：one
+2026-07-28 10:56:04,199 - f2 - INFO - 模式：one
+2026-07-28 10:56:04,199 - f2 - INFO - 模式：one
+2026-07-28 10:56:04,200 - f2 - INFO - 主配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/.venv/lib/python3.12/site-packages/f2/conf/app.yaml
+2026-07-28 10:56:04,200 - f2 - INFO - 主配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/.venv/lib/python3.12/site-packages/f2/conf/app.yaml
+2026-07-28 10:56:04,200 - f2 - INFO - 主配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/.venv/lib/python3.12/site-packages/f2/conf/app.yaml
+2026-07-28 10:56:04,200 - f2 - INFO - 自定义配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/storage/jobs/91402b929d71/f2_config_6a581777.yaml
+2026-07-28 10:56:04,200 - f2 - INFO - 自定义配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/storage/jobs/db8a73d54d59/f2_config_546f0e10.yaml
+2026-07-28 10:56:04,200 - f2 - INFO - 自定义配置路径：/Users/nguyenanhtuan/Documents/Workspace/ProjectMMo/douyin-vietsub-tool/backend/storage/jobs/4e19c0b6fb84/f2_config_22bc7d99.yaml
+2026-07-28 10:56:05,535 - f2 - INFO - 处理作品: 7627458028320656675 数据
+2026-07-28 10:56:05,665 - f2 - INFO - 处理作品: 7645878065259760947 数据
+2026-07-28 10:56:05,735 - f2 - INFO - 处理作品: 7628232891385826575 数据
+2026-07-28 10:56:06,424 - f2 - ERROR - HTTP状态错误：Client error '405 Method Not Allowed' for url 'https://api.day.app/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/405, URL：https://api.day.app/, 尝试次数：1
+2026-07-28 10:56:06,429 - f2 - ERROR - 请前往QA文档 https://f2.wiki/faq 查看相关帮助
+2026-07-28 10:56:06,430 - f2 - ERROR - Bark 通知发送失败，请检查 key 和网络连接：HTTP状态码错误： Status Code: 405
+2026-07-28 10:56:06,635 - f2 - ERROR - HTTP状态错误：Client error '405 Method Not Allowed' for url 'https://api.day.app/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/405, URL：https://api.day.app/, 尝试次数：1
+2026-07-28 10:56:06,640 - f2 - ERROR - 请前往QA文档 https://f2.wiki/faq 查看相关帮助
+2026-07-28 10:56:06,643 - f2 - ERROR - Bark 通知发送失败，请检查 key 和网络连接：HTTP状态码错误： Status Code: 405
+2026-07-28 10:56:07,027 - f2 - ERROR - HTTP状态错误：Client error '405 Method Not Allowed' for url 'https://api.day.app/'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/405, URL：https://api.day.app/, 尝试次数：1
+2026-07-28 10:56:07,028 - f2 - ERROR - 请前往QA文档 https://f2.wiki/faq 查看相关帮助
+2026-07-28 10:56:07,028 - f2 - ERROR - Bark 通知发送失败，请检查 key 和网络连接：HTTP状态码错误： Status Code: 405
+2026-07-28 10:56:07,233 - f2 - WARNING - 未提供日期区间参数
+2026-07-28 10:56:07,393 - f2 - WARNING - 未提供日期区间参数
+2026-07-28 10:56:07,788 - f2 - WARNING - 未提供日期区间参数
+2026-07-28 10:56:14,126 - f2 - INFO - [green][  完成  ]：7628232891385826575_video.mp4[/green]
+2026-07-28 10:56:15,021 - f2 - INFO - [green][  完成  ]：7627458028320656675_video.mp4[/green]
+2026-07-28 10:56:18,367 - f2 - INFO - [green][  完成  ]：7645878065259760947_video.mp4[/green]
