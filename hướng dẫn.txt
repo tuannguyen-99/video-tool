@@ -1,0 +1,46 @@
+- Cài Python từ https://www.python.org/downloads/ (nhớ tick **"Add python.exe to PATH"** lúc cài).
+- Cài Node.js từ https://nodejs.org.
+- Cài ffmpeg: cách dễ nhất là `winget install ffmpeg`
+- Dùng **PowerShell**, không dùng cmd.exe, cho các lệnh bên dưới.
+
+
+
+-Click chuột phải vào backend, chọn open Terminal
+Nhập từng dòng bên dưới:
+
+New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+python -m venv .venv
+
+.venv\Scripts\Activate.ps1
+
+pip install --upgrade pip
+
+pip install --upgrade "av>=13" --only-binary=:all:
+
+pip install -r requirements-windows.txt
+
+uvicorn app.main:app --reload --port 8000
+
+-Xong phân BE, giữ nguyên Terminal đấy
+
+--Click chuột phải vào frontend, chọn open Terminal
+
+npm install
+npm run dev
+
+Web : http://localhost:5173/
+
+Tìm link trên biblibli hoặc douyin, coppy vào mục url, có thể nhập nhiều link bằng dấu ","
+
+Chọn Platform (Douyin, Bilibili)
+
+Thêm file cookie của doyen, hoặc bilibili có sẵn trong thư mục
+
+Chương trình dùng Voice mặc định, có thể tự cắt file Voice của nam và nữ mình thích bỏ vào.
+
+Phần còn lại tùy chọn
+
+Chọn bắt đầu để chạy chương trình, nếu chạy xong, phía dưới sẽ hiển thị các File đã dịch để tải, có tên video đã dịch luôn.

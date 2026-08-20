@@ -1,0 +1,14 @@
+# Use this file INSTEAD OF requirements.txt when installing on Windows:
+#   pip install -r requirements-windows.txt
+#
+# llama-cpp-python (a dependency of vieneu) has no official prebuilt wheel
+# for Windows on PyPI and fails to build from source without MSVC build
+# tools installed. This extra index serves prebuilt Windows CPU wheels
+# published by the VieNeu-TTS author, so pip installs those instead of
+# trying (and failing) to build from source.
+#
+# macOS/Linux: don't use this file — see requirements.txt directly, which
+# builds llama-cpp-python from source without needing this index.
+--extra-index-url https://pnnbao97.github.io/llama-cpp-python-v0.3.16/cpu/
+
+-r requirements.txt
