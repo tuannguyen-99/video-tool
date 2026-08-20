@@ -5,8 +5,10 @@ __pycache__/
 *.pyc
 backend/storage/uploads/*
 backend/storage/jobs/*
+backend/logs/*
 !backend/storage/uploads/.gitkeep
 !backend/storage/jobs/.gitkeep
+!backend/logs/.gitkeep
 .env
 backend/storage/outputs/*
 !backend/storage/outputs/.gitkeep

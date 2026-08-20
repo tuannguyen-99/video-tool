@@ -76,6 +76,8 @@ pip install --upgrade "av>=13" --only-binary=:all:
 pip install --upgrade pip
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
+deactivate
+rm -rf .venv
 
 ```
 
@@ -88,6 +90,13 @@ python -m venv .venv
 pip install --upgrade pip
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
+```
+
+Nếu có lỗi chạy thử lệnh dưới rồi thử lại
+Bật powershell với quyền admin
+
+```
+New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
 ```
 
 Nếu PowerShell chặn script với lỗi "running scripts is disabled", chạy một lần:
@@ -132,6 +141,7 @@ Mở một terminal/PowerShell **khác** (giữ backend đang chạy ở cửa s
 cd frontend
 npm install
 npm run dev
+Nếu sử dụng Douyin thì import file cookie của douyin, sử dụng Bilibili thì import file cookie của BiliBili.
 ```
 
 Lệnh này giống nhau trên cả Windows và macOS. Mở `http://localhost:5173` —
