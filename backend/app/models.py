@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class StageName(str, Enum):
     QUEUED = "queued"
     DOWNLOAD = "download"
+    REMOVE_HARDSUB = "remove_hardsub"
     SPEECH_TO_TEXT = "speech_to_text"
     TRANSLATE = "translate"
     TEXT_TO_SPEECH = "text_to_speech"
@@ -66,6 +67,12 @@ class JobState(BaseModel):
     # Whether TTS voice (male/female) is auto-matched to the source
     # speaker's detected voice, instead of always using one fixed voice.
     match_voice_gender: bool = False
+    # Whether hard-coded source-language subtitles already burned into the
+    # source video's pixels get erased (AI inpainting, via VSR) before the
+    # new Vietnamese subtitles are burned in. Off by default — slow
+    # (frame-by-frame AI), only meaningful for source videos that actually
+    # have a hard-sub. See job_manager.py / pipeline/subtitle_remover.py.
+    remove_hardsub: bool = False
     # Populated once match_voice_gender is on and detection actually ran
     # (during the text_to_speech stage). None if the option is off, or if
     # detection was inconclusive and the default voice was used instead.
@@ -99,3 +106,4 @@ class CreateBatchForm(BaseModel):
     split_long_video: bool = False  # cut the final video into parts if longer than split_video_minutes
     split_video_minutes: float = 10.0  # part length in minutes, only used when split_long_video is True
     match_voice_gender: bool = False  # pick TTS voice (male/female) to match the source speaker instead of one fixed voice
+    remove_hardsub: bool = False  # erase hard-coded source-language subtitles already burned into the source video before burning in the new Vietnamese ones (slow — AI inpainting)

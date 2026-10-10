@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   cancelJob,
   deleteAllFinishedJobs,
@@ -6,6 +6,8 @@ import {
   downloadUrl,
 } from "../lib/api";
 import { JobState, Platform, StageName } from "../types";
+
+const SPLIT_MINUTES_STORAGE_KEY = "douyin-vietsub:splitVideoMinutes";
 
 const STAGE_LABELS: Record<StageName, string> = {
   queued: "Đang chờ trong hàng đợi",
@@ -56,12 +58,11 @@ function StatusPill({ status }: { status: JobState["status"] }) {
 }
 
 function ProgressBar({ value }: { value: number }) {
-  const pct = Math.max(0, Math.min(1, value)) * 100;
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-ink-700">
       <div
         className="h-full rounded-full bg-emerald-500 transition-all"
-        style={{ width: `${pct}%` }}
+        style={{ width: `${value}%` }}
       />
     </div>
   );
@@ -78,6 +79,7 @@ function JobRow({ job, onDeleted, onError }: JobRowProps) {
   const [deleting, setDeleting] = useState(false);
   const canCancel = job.status === "pending" || job.status === "running";
   const canDelete = FINISHED_STATUSES.includes(job.status);
+  const pct = Math.max(0, Math.min(1, job.progress)) * 100;
 
   const files =
     job.output_files && job.output_files.length > 0
@@ -120,7 +122,11 @@ function JobRow({ job, onDeleted, onError }: JobRowProps) {
           <StatusPill status={job.status} />
           {job.split_long_video && (
             <span className="rounded bg-ink-700 px-2 py-0.5 text-xs text-ink-400">
-              Cắt đoạn 10 phút
+              Cắt đoạn{" "}
+              {localStorage.getItem(SPLIT_MINUTES_STORAGE_KEY)
+                ? localStorage.getItem(SPLIT_MINUTES_STORAGE_KEY)
+                : "10"}{" "}
+              phút
             </span>
           )}
           {job.match_voice_gender && (
@@ -183,9 +189,9 @@ function JobRow({ job, onDeleted, onError }: JobRowProps) {
             {job.platform === "local" && job.stage === "download"
               ? "Đang xử lý file đã tải lên"
               : (STAGE_LABELS[job.stage] ?? job.stage)}
-            …
+            {pct ? ` ${Math.floor(pct)}%` : " ..."}
           </p>
-          <ProgressBar value={job.progress} />
+          <ProgressBar value={pct} />
         </div>
       )}
 

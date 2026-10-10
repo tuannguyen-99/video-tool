@@ -197,3 +197,5 @@ backend/app/
     mux.py                    ffmpeg: tách audio, ghép track TTS theo timestamp,
                               trộn nhạc nền, gắn cứng sub, xuất video cuối
 ```
+
+https://github.com/Johnserf-Seed/f2/issues/443

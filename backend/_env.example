@@ -1,0 +1,74 @@
+# ============================================================================
+# Speech-to-text (pipeline/transcribe.py)
+# ============================================================================
+
+# Which STT engine to use: "funasr" (default, FunASR/SenseVoice — purpose-
+# built for Chinese, ~2.7x lower CER than Whisper on Chinese benchmarks) or
+# "whisper" (faster-whisper — fallback, what this app used before FunASR
+# was added). Leave unset for funasr.
+STT_ENGINE=funasr
+
+# --- FunASR (STT_ENGINE=funasr) ---
+# HuggingFace repo id / ModelScope model id for the ASR model. Leave unset
+# for the default (iic/SenseVoiceSmall).
+FUNASR_MODEL=
+# VAD model used to find speech regions before ASR. Leave unset for the
+# default (fsmn-vad) — no real reason to change this.
+FUNASR_VAD_MODEL=
+# "cpu" (default) or a CUDA device string (e.g. "cuda:0") if you have a
+# real GPU available.
+FUNASR_DEVICE=cpu
+# FunASR downloads model weights from ModelScope by default (fast inside
+# China, can be slow/unreliable elsewhere). Set to "hf" to download from
+# Hugging Face instead.
+FUNASR_HUB=
+
+# --- Whisper (STT_ENGINE=whisper, also used internally for voice-clone
+# reference-clip transcription regardless of STT_ENGINE — see
+# transcribe_reference_clip in transcribe.py, since SenseVoice doesn't
+# support Vietnamese) ---
+WHISPER_MODEL=medium
+WHISPER_COMPUTE_TYPE=int8
+WHISPER_DEVICE=auto
+
+# NOTE: FunASR's segmentation tuning (VAD region length, sentence-merge
+# targets, which punctuation characters split sentences, etc.) is no
+# longer env-var configurable — those are now plain constants directly in
+# pipeline/transcribe.py (search for "SEGMENTATION TUNING"). Edit them
+# there and restart instead of setting env vars for them.
+
+
+# ============================================================================
+# Vietnamese TTS — VieNeu-TTS (pipeline/tts.py)
+# ============================================================================
+# All optional. See tts.py's module docstring for the full priority order
+# between these and the per-job voice-clone options set from the UI.
+
+# Server-wide default preset voice (used when nothing more specific is
+# configured/uploaded for a job).
+VIENEU_VOICE=Đức Trí
+
+# Server-wide default preset voice PER GENDER, used by match_voice_gender
+# when a job doesn't upload its own male/female voice-clone reference.
+# Check `vieneu`'s own docs/README for valid preset names.
+VIENEU_VOICE_MALE=
+VIENEU_VOICE_FEMALE=
+
+# Server-wide voice-clone reference (kept for backwards compatibility with
+# single-voice deployments — normally you'd instead upload/reuse a saved
+# voice per-batch from the UI, see VOICE_REFS_DIR below). Both must be set
+# together — vieneu's SDK requires ref_audio AND ref_text together, one
+# without the other is ignored.
+VIENEU_REF_AUDIO=
+VIENEU_REF_TEXT=
+
+
+# ============================================================================
+# Saved voice-clone references (voice_refs.py)
+# ============================================================================
+# Where uploaded voice-clone reference clips get permanently saved when the
+# user checks "lưu giọng này" in the UI, so they're reusable across batches
+# without re-uploading. Defaults to a folder in the backend operator's home
+# directory if unset. Point this at a mounted volume if running in a
+# container, so saved voices survive a redeploy.
+VOICE_REFS_DIR=

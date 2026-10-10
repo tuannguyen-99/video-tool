@@ -1,5 +1,3 @@
-
-
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-multipart==0.0.9
@@ -9,16 +7,70 @@ pydantic==2.9.2
 # https://github.com/Johnserf-Seed/f2
 f2>=0.0.1.6
 
-# Speech to text
+# Speech to text — two selectable engines, see pipeline/transcribe.py.
+#
+# Default (STT_ENGINE=funasr, or unset): FunASR's SenseVoice, purpose-built
+# for Chinese/Asian-language ASR. Measured ~2.7x lower character error rate
+# than Whisper on Chinese benchmarks (this app's videos are Douyin/Bilibili
+# — always Chinese source audio), while also being smaller and faster on
+# CPU. Pulls in its own torch — if you hit an import error similar to the
+# vieneu/torchao/torchtune one pinned below, apply the same fix (get the
+# full traceback, identify the exact broken transitive dependency, pin it
+# here) rather than assuming it's the same root cause.
+#
+# >=1.4.0 specifically: older releases had a bug where a misconfigured VAD
+# setup (e.g. the vad_model/vda_model typo) could silently disable
+# sentence-level segmentation instead of raising — for long audio this
+# collapses the whole file into one giant segment, corrupting subtitle
+# timing/TTS placement and exceeding translation API length limits. See
+# pipeline/transcribe.py's merge_vad/merge_length_s + the length guard
+# around its sentence_info fallback.
+funasr>=1.4.0
+
+# Fallback engine (STT_ENGINE=whisper) — what this app used exclusively
+# before FunASR was added. Kept installed and fully working so switching
+# back needs only an env var, no reinstall/code changes.
 faster-whisper==1.0.3
 
 # Translation (zh -> vi)
 deep-translator==1.11.4
 
 # Vietnamese TTS — VieNeu-TTS (https://github.com/pnnbao97/VieNeu-TTS)
+# Minimal install is torch-free and runs v3 Turbo on CPU via ONNX Runtime.
+# For GPU (PyTorch engine + v1/v2 models): pip install "vieneu[gpu]"
+#
+# Depends on llama-cpp-python, which builds fine from source here (macOS
+# ships clang/cmake via Xcode Command Line Tools, and Linux typically has
+# gcc/cmake available too — install them via your package manager if not).
+#
+# On WINDOWS ONLY: llama-cpp-python has no official prebuilt wheel on PyPI
+# and fails to build from source without MSVC build tools installed. Use
+# requirements-windows.txt instead of this file on Windows — it adds
+# --extra-index-url pointing to prebuilt Windows CPU wheels published by
+# the VieNeu-TTS author, so pip skips the source build entirely.
 vieneu
 
+# Pins a transitive dependency, not something this app imports directly:
+# vieneu -> neucodec -> torchtune (just for RotaryPositionalEmbeddings) ->
+# torchtune eagerly imports torchao.dtypes.nf4tensor.NF4Tensor at import
+# time (used internally for a QLoRA training hook this app's TTS-inference
+# path never touches). torchao releases >=0.14 moved/removed that module,
+# which breaks the whole `from vieneu import Vieneu` import chain with
+# "ModuleNotFoundError: No module named 'torchao.dtypes.nf4tensor'" even
+# though nothing here uses torchao directly. Neither vieneu nor torchtune
+# pin torchao themselves (torchtune's maintainers do this on purpose, to
+# stay compatible with both stable and nightly PyTorch), so pip resolves
+# to torchao's latest release unless constrained here.
+# TODO: re-check/relax this pin if vieneu/neucodec/torchtune update to
+# support newer torchao releases.
 torchao<0.14
+
+# Optional pitch-based gender detection (gender_detect.py), used when
+# "match_voice_gender" is enabled to pick a matching TTS voice per speaker.
+# Used directly by mux.py (audio mixing) and transcribe.py's FunASR path
+# (VAD-region slicing) — previously only present transitively via other
+# packages, declared explicitly now since both import it directly.
+numpy
 
 librosa
 

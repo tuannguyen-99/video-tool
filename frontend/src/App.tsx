@@ -8,7 +8,10 @@ import { IconCookie, IconMusic } from "./components/icons";
 import {
   cancelAllJobs,
   createBatch,
+  CookieRef,
+  deleteCookieRef,
   deleteVoiceRef,
+  listCookieRefs,
   listVoiceRefs,
   VoiceRef,
 } from "./lib/api";
@@ -21,7 +24,30 @@ const PLATFORM_STORAGE_KEY = "douyin-vietsub:platform";
 const SPLIT_STORAGE_KEY = "douyin-vietsub:splitLongVideo";
 const SPLIT_MINUTES_STORAGE_KEY = "douyin-vietsub:splitVideoMinutes";
 const MATCH_VOICE_GENDER_STORAGE_KEY = "douyin-vietsub:matchVoiceGender";
+const REMOVE_HARDSUB_STORAGE_KEY = "douyin-vietsub:removeHardsub";
 const WATERMARK_TEXT_STORAGE_KEY = "douyin-vietsub:watermarkText";
+const TRANSLATE_ENGINE_STORAGE_KEY = "douyin-vietsub:translateEngine";
+
+// Hai model dịch chạy local (xem pipeline/translate.py). Giá trị gửi lên
+// backend phải khớp đúng SUPPORTED_ENGINES bên đó.
+type TranslateEngine = "nllb" | "hachimi";
+
+const TRANSLATE_ENGINE_OPTIONS: {
+  value: TranslateEngine;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "nllb",
+    label: "NLLB-200",
+    hint: "Đa ngôn ngữ, ổn định cho video nói thường. Nặng hơn, chậm hơn trên CPU.",
+  },
+  {
+    value: "hachimi",
+    label: "HachimiMT-60",
+    hint: "Chỉ Trung → Việt, train riêng cho truyện mạng (tiên hiệp, đô thị). Nhẹ hơn ~10 lần nên nhanh hơn nhiều, xưng hô Hán-Việt tự nhiên hơn.",
+  },
+];
 
 // The three source tabs: fetch by URL from Douyin/Bilibili, or skip
 // fetching entirely and use a video file already on the user's machine.
@@ -135,6 +161,10 @@ export default function App() {
 
   function handleSourceTabChange(v: SourceTab) {
     setSourceTab(v);
+    // A saved cookie is tied to one platform (Douyin cookies don't
+    // authenticate Bilibili and vice versa) — clear the selection so
+    // switching tabs doesn't silently carry over the wrong one.
+    setCookieRefId("");
     try {
       localStorage.setItem(PLATFORM_STORAGE_KEY, v);
     } catch {
@@ -146,6 +176,35 @@ export default function App() {
   const [cookieFile, setCookieFile] = useState<File | null>(null);
   const [musicFile, setMusicFile] = useState<File | null>(null);
   const [localVideoFiles, setLocalVideoFiles] = useState<File[]>([]);
+
+  // Saved cookie files (see /api/cookie-refs), fetched once and refreshed
+  // after any batch submit that might have saved a new one. Either a
+  // saved one (cookieRefId) or a fresh upload (cookieFile) is used — see
+  // the cookie resolution block in main.py's create_jobs.
+  const [savedCookieRefs, setSavedCookieRefs] = useState<CookieRef[]>([]);
+  async function refreshCookieRefs() {
+    try {
+      setSavedCookieRefs(await listCookieRefs());
+    } catch {
+      // Non-critical — the picker just falls back to "upload new" only.
+    }
+  }
+  useEffect(() => {
+    refreshCookieRefs();
+  }, []);
+  const [cookieRefId, setCookieRefId] = useState("");
+  const [cookieSaveLabel, setCookieSaveLabel] = useState("");
+  async function handleDeleteCookieRef(id: string) {
+    try {
+      await deleteCookieRef(id);
+      await refreshCookieRefs();
+      if (cookieRefId === id) setCookieRefId("");
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Không thể xóa cookie đã lưu.",
+      );
+    }
+  }
 
   // Saved voice-clone references (see /api/voice-refs), fetched once and
   // refreshed after any batch submit that might have saved a new one.
@@ -220,6 +279,27 @@ export default function App() {
       return false;
     }
   });
+  // Default OFF: AI inpainting per-frame is far slower than every other
+  // stage in the pipeline, so this should only run for source videos that
+  // actually have a burned-in subtitle to remove — see the tooltip text
+  // below for the tradeoff, matches subtitle_remover.py's own reasoning.
+  const [removeHardsub, setRemoveHardsub] = useState(() => {
+    try {
+      return localStorage.getItem(REMOVE_HARDSUB_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [translateEngine, setTranslateEngine] = useState<TranslateEngine>(
+    () => {
+      try {
+        const saved = localStorage.getItem(TRANSLATE_ENGINE_STORAGE_KEY);
+        return saved === "nllb" || saved === "hachimi" ? saved : "nllb";
+      } catch {
+        return "nllb";
+      }
+    },
+  );
   const [watermarkText, setWatermarkText] = useState(() => {
     try {
       return localStorage.getItem(WATERMARK_TEXT_STORAGE_KEY) ?? "";
@@ -262,6 +342,24 @@ export default function App() {
     setMatchVoiceGender(v);
     try {
       localStorage.setItem(MATCH_VOICE_GENDER_STORAGE_KEY, v ? "1" : "0");
+    } catch {
+      // localStorage unavailable — not critical, just skip persisting
+    }
+  }
+
+  function handleRemoveHardsubChange(v: boolean) {
+    setRemoveHardsub(v);
+    try {
+      localStorage.setItem(REMOVE_HARDSUB_STORAGE_KEY, v ? "1" : "0");
+    } catch {
+      // localStorage unavailable — not critical, just skip persisting
+    }
+  }
+
+  function handleTranslateEngineChange(v: TranslateEngine) {
+    setTranslateEngine(v);
+    try {
+      localStorage.setItem(TRANSLATE_ENGINE_STORAGE_KEY, v);
     } catch {
       // localStorage unavailable — not critical, just skip persisting
     }
@@ -312,7 +410,9 @@ export default function App() {
   const isLocalTab = sourceTab === "local";
   const hasUrls = !isLocalTab && urlCount > 0;
   const hasLocalFiles = localVideoFiles.length > 0;
-  const canSubmit = isLocalTab ? hasLocalFiles : hasUrls && !!cookieFile;
+  const canSubmit = isLocalTab
+    ? hasLocalFiles
+    : hasUrls && (!!cookieFile || !!cookieRefId);
 
   async function handleSubmit() {
     setErrorMessage(null);
@@ -326,7 +426,7 @@ export default function App() {
         setErrorMessage("Vui lòng nhập ít nhất 1 URL.");
         return;
       }
-      if (!cookieFile) {
+      if (!cookieFile && !cookieRefId) {
         const platformLabel = platform === "douyin" ? "Douyin" : "Bilibili";
         setErrorMessage(
           `Vui lòng chọn file cookie để xác thực với ${platformLabel}.`,
@@ -345,7 +445,9 @@ export default function App() {
       const res = await createBatch({
         urls: urlList,
         platform,
-        cookieFile: isLocalTab ? null : cookieFile,
+        cookieFile: isLocalTab || cookieRefId ? null : cookieFile,
+        cookieRefId: isLocalTab ? null : cookieRefId || null,
+        saveCookieLabel: isLocalTab ? undefined : cookieSaveLabel,
         musicFile,
         burnSubtitles,
         mixMusicVolume: musicVolume,
@@ -353,6 +455,7 @@ export default function App() {
         splitLongVideo,
         splitVideoMinutes,
         matchVoiceGender,
+        removeHardsub,
         maleVoiceRefFile:
           matchVoiceGender && !maleVoiceRefId ? maleVoiceRefFile : null,
         femaleVoiceRefFile:
@@ -370,6 +473,7 @@ export default function App() {
         saveVoiceRefLabel: !matchVoiceGender ? voiceRefSaveLabel : undefined,
         localVideoFiles: isLocalTab ? localVideoFiles : [],
         watermarkText,
+        translateEngine,
       });
 
       // Job order from the backend is URL jobs first, then local-upload
@@ -419,6 +523,11 @@ export default function App() {
       setVoiceRefFile(null);
       setVoiceRefSaveLabel("");
       refreshVoiceRefs();
+      // Same reasoning as the voice refs: clear the save-label input, but
+      // leave cookieFile/cookieRefId as-is since people usually reuse the
+      // same cookie across several batches.
+      setCookieSaveLabel("");
+      refreshCookieRefs();
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? err.message : "Đã có lỗi không xác định.",
@@ -457,6 +566,12 @@ export default function App() {
     platform === "douyin"
       ? "File cookie (f2)"
       : "File cookie (Netscape cookies.txt)";
+  const cookieRefsForPlatform = savedCookieRefs.filter(
+    (r) => r.platform === platform,
+  );
+  const selectedCookieRef = cookieRefsForPlatform.find(
+    (r) => r.id === cookieRefId,
+  );
 
   function handleDeleteJob(jobId: string) {
     setTrackedIds((prev) => {
@@ -578,13 +693,63 @@ export default function App() {
             <>
               <UrlInput value={urls} onChange={setUrls} />
 
-              <FileDrop
-                label={cookieLabel}
-                icon={<IconCookie />}
-                accept=".txt,.json,.yaml,.yml"
-                file={cookieFile}
-                onChange={setCookieFile}
-              />
+              <div className="grid gap-1.5">
+                <label className="text-sm font-medium text-ink-200">
+                  {cookieLabel}
+                </label>
+
+                {cookieRefsForPlatform.length > 0 && (
+                  <select
+                    value={cookieRefId}
+                    onChange={(e) => setCookieRefId(e.target.value)}
+                    className="rounded border border-ink-600 bg-ink-800 px-3 py-2 text-sm text-ink-100"
+                  >
+                    <option value="">— Tải file mới —</option>
+                    {cookieRefsForPlatform.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {selectedCookieRef ? (
+                  <div className="flex items-center justify-between gap-2 text-xs text-ink-400">
+                    <span>
+                      Đang dùng cookie đã lưu: {selectedCookieRef.label}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleDeleteCookieRef(selectedCookieRef.id)
+                      }
+                      className="shrink-0 font-medium text-ink-400 transition-colors hover:text-red-300"
+                    >
+                      Xóa cookie này
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <FileDrop
+                      label="Tải file cookie mới"
+                      icon={<IconCookie />}
+                      accept=".txt,.json,.yaml,.yml"
+                      file={cookieFile}
+                      onChange={setCookieFile}
+                    />
+                    {cookieFile && (
+                      <input
+                        type="text"
+                        placeholder="Lưu cookie này với tên (để dùng lần sau) — bỏ trống nếu chỉ dùng 1 lần"
+                        value={cookieSaveLabel}
+                        onChange={(e) => setCookieSaveLabel(e.target.value)}
+                        maxLength={60}
+                        className="rounded border border-ink-600 bg-ink-800 px-3 py-2 text-xs text-ink-100 placeholder:text-ink-500"
+                      />
+                    )}
+                  </>
+                )}
+              </div>
             </>
           )}
 
@@ -641,6 +806,44 @@ export default function App() {
             </div>
           </div>
 
+          <div className="grid gap-1.5">
+            <label className="text-sm font-medium text-ink-200">
+              Model dịch
+              <span className="ml-1 text-ink-500">
+                (tuỳ chọn, cả hai đều chạy offline trên máy)
+              </span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {TRANSLATE_ENGINE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => handleTranslateEngineChange(opt.value)}
+                  aria-pressed={translateEngine === opt.value}
+                  className={`rounded border px-4 py-2 text-sm font-medium transition-colors ${
+                    translateEngine === opt.value
+                      ? "border-emerald-500 bg-emerald-500/10 text-emerald-300"
+                      : "border-ink-700 bg-ink-800/40 text-ink-300 hover:border-ink-600"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-ink-500">
+              {
+                TRANSLATE_ENGINE_OPTIONS.find(
+                  (o) => o.value === translateEngine,
+                )?.hint
+              }
+            </p>
+            <p className="text-xs text-ink-500">
+              Model phải được tải trước ở mục “Xem trạng thái cài đặt hệ thống”
+              ({translateEngine === "hachimi" ? "hachimi_model" : "nllb_model"}
+              ).
+            </p>
+          </div>
+
           <div className="grid gap-2">
             <label className="flex items-center gap-2 text-sm text-ink-200">
               <input
@@ -677,6 +880,20 @@ export default function App() {
               </div>
             )}
           </div>
+
+          <label className="flex items-center gap-2 text-sm text-ink-200">
+            <input
+              type="checkbox"
+              checked={removeHardsub}
+              onChange={(e) => handleRemoveHardsubChange(e.target.checked)}
+              className="h-4 w-4 rounded border-ink-600 bg-ink-800 accent-emerald-500"
+            />
+            Xoá sub tiếng Trung đã gắn cứng trong video gốc (AI)
+            <span className="text-ink-500">
+              (tuỳ chọn, mặc định tắt — chỉ bật nếu video nguồn có sẵn sub cứng,
+              làm chậm đáng kể do phải xử lý AI từng khung hình)
+            </span>
+          </label>
 
           <label className="flex items-center gap-2 text-sm text-ink-200">
             <input

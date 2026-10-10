@@ -8,7 +8,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, W
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
-from . import deps_check, voice_refs
+from . import cookie_refs, deps_check, voice_refs
 from .job_manager import manager
 from .models import BatchCreateResponse, JobStatus, Platform
 from .storage import save_upload
@@ -41,12 +41,12 @@ async def system_dependencies():
 @app.post("/api/system/dependencies/{name}/install")
 async def install_dependency(name: str):
     """Installs a pip-installable dependency (f2, yt-dlp, faster_whisper,
-    deep_translator, vieneu) or downloads the Whisper model
-    (WHISPER_MODEL_NAME), streaming progress back as plain text lines in
-    real time.
+    deep_translator, vieneu, ctranslate2, transformers, sentencepiece) or
+    downloads/prepares a model (WHISPER_MODEL_NAME, NLLB_MODEL_NAME),
+    streaming progress back as plain text lines in real time.
 
     SECURITY: `name` must be a key in deps_check.PIP_PACKAGE_BY_NAME or
-    deps_check.MODEL_DOWNLOAD_BY_NAME — fixed, server-side whitelists. We
+    deps_check.MODEL_DOWNLOADER_BY_NAME — fixed, server-side whitelists. We
     deliberately do NOT accept a pip spec, repo id, or any install
     arguments from the client; otherwise any caller could make this
     backend run an arbitrary `pip install <anything>` (including
@@ -56,9 +56,9 @@ async def install_dependency(name: str):
     whitelist on purpose and always return 400 here.
     """
     pip_spec = deps_check.PIP_PACKAGE_BY_NAME.get(name)
-    model_size = deps_check.MODEL_DOWNLOAD_BY_NAME.get(name)
+    model_downloader = deps_check.MODEL_DOWNLOADER_BY_NAME.get(name)
 
-    if pip_spec is None and model_size is None:
+    if pip_spec is None and model_downloader is None:
         raise HTTPException(
             status_code=400,
             detail=f"'{name}' không thể tự cài qua API này, vui lòng cài thủ công.",
@@ -66,8 +66,8 @@ async def install_dependency(name: str):
 
     async def stream():
         try:
-            if model_size is not None:
-                async for line in deps_check.download_whisper_model(model_size):
+            if model_downloader is not None:
+                async for line in model_downloader():
                     yield line + "\n"
                 yield "\n[OK] Tải model thành công.\n"
             else:
@@ -100,6 +100,26 @@ async def delete_voice_ref(ref_id: str):
     return {"ok": True}
 
 
+@app.get("/api/cookie-refs")
+async def list_cookie_refs(platform: Optional[str] = None):
+    """Lists saved cookie files, so the UI can offer 'reuse a previously
+    saved cookie' instead of forcing a fresh upload every batch.
+    `platform` optionally filters to 'douyin' or 'bilibili'."""
+    if platform is not None and platform not in ("douyin", "bilibili"):
+        raise HTTPException(
+            status_code=422, detail="platform phải là 'douyin' hoặc 'bilibili'"
+        )
+    return {"items": cookie_refs.list_cookie_refs(platform)}  # type: ignore[arg-type]
+
+
+@app.delete("/api/cookie-refs/{ref_id}")
+async def delete_cookie_ref(ref_id: str):
+    ok = cookie_refs.delete_cookie_ref(ref_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Không tìm thấy cookie đã lưu")
+    return {"ok": True}
+
+
 @app.post("/api/jobs", response_model=BatchCreateResponse)
 async def create_jobs(
     urls: str = Form(""),
@@ -113,11 +133,24 @@ async def create_jobs(
     split_long_video: bool = Form(False),
     split_video_minutes: float = Form(10.0),
     match_voice_gender: bool = Form(False),
+    # Erases hard-coded source-language subtitles already burned into the
+    # source video's pixels (AI inpainting via VSR) before the new
+    # Vietnamese subtitles get burned in. Off by default — slow, only
+    # meaningful when the source actually has a hard-sub.
+    remove_hardsub: bool = Form(False),
     # Channel-name watermark burned into the top-left corner of the export
     # (see mux.export_final). Empty/omitted = no watermark, unchanged
     # behavior from before this option existed.
     watermark_text: Optional[str] = Form(None),
     cookie_file: Optional[UploadFile] = File(None),
+    # Reuse a previously saved cookie (see /api/cookie-refs) instead of
+    # uploading a fresh file. Takes priority over cookie_file if both are
+    # sent — same convention as the voice ref *_id/*_file pairs below.
+    cookie_ref_id: Optional[str] = Form(None),
+    # Non-empty = also persist the matching fresh cookie_file permanently
+    # under this label (tagged with `platform`), so it shows up in
+    # /api/cookie-refs for future batches instead of needing a re-upload.
+    save_cookie_label: Optional[str] = Form(None),
     music_file: Optional[UploadFile] = File(None),
     male_voice_ref_file: Optional[UploadFile] = File(None),
     female_voice_ref_file: Optional[UploadFile] = File(None),
@@ -163,21 +196,40 @@ async def create_jobs(
             status_code=422,
             detail="Cần ít nhất 1 URL hoặc 1 file video đã tải sẵn trên máy.",
         )
+
+    batch_id = uuid.uuid4().hex[:10]
+
     # Cookie is only needed to authenticate the URL-based download (f2/
     # yt-dlp) — a purely-local batch (only video_files, no urls) doesn't
-    # need one at all.
-    if url_list and (cookie_file is None or not cookie_file.filename):
+    # need one at all. Same two-way resolution as the voice refs below:
+    # an existing saved cookie (cookie_ref_id) takes priority over a fresh
+    # upload (cookie_file); if a fresh upload also carries a non-empty
+    # save_cookie_label, the same bytes get persisted via
+    # cookie_refs.save_cookie_ref() so this file shows up in
+    # /api/cookie-refs (filtered to this `platform`) for future batches.
+    cookie_path: Optional[str] = None
+    if cookie_ref_id:
+        cookie_path = cookie_refs.get_cookie_ref_path(cookie_ref_id)
+        if cookie_path is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Không tìm thấy cookie đã lưu (id={cookie_ref_id!r})",
+            )
+    elif cookie_file is not None and cookie_file.filename:
+        cookie_bytes = await cookie_file.read()
+        cookie_path = save_upload(batch_id, cookie_file.filename or "cookies.txt", cookie_bytes)
+        if save_cookie_label and save_cookie_label.strip():
+            cookie_refs.save_cookie_ref(
+                platform, save_cookie_label, cookie_file.filename or "cookies.txt", cookie_bytes
+            )
+
+    if url_list and cookie_path is None:
         platform_label = "Douyin" if platform == "douyin" else "Bilibili"
         raise HTTPException(
             status_code=422,
             detail=f"Vui lòng chọn file cookie để xác thực với {platform_label}.",
         )
 
-    batch_id = uuid.uuid4().hex[:10]
-
-    cookie_path = None
-    if cookie_file is not None and cookie_file.filename:
-        cookie_path = save_upload(batch_id, cookie_file.filename or "cookies.txt", await cookie_file.read())
     music_path = None
     if music_file is not None and music_file.filename:
         music_path = save_upload(batch_id, music_file.filename, await music_file.read())
@@ -241,6 +293,7 @@ async def create_jobs(
         split_long_video=split_long_video,
         split_video_minutes=split_video_minutes,
         match_voice_gender=match_voice_gender,
+        remove_hardsub=remove_hardsub,
         male_ref_path=male_ref_path,
         female_ref_path=female_ref_path,
         single_ref_path=single_ref_path,

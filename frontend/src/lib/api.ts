@@ -8,6 +8,13 @@ export interface CreateBatchParams {
   urls: string[];
   platform: Platform;
   cookieFile: File | null;
+  // Reuse a previously saved cookie file (see listCookieRefs) instead of
+  // uploading a fresh one. Takes priority over cookieFile if both are set.
+  cookieRefId?: string | null;
+  // Non-empty = also persist the matching fresh cookieFile permanently
+  // (tagged with `platform`) under this label, so it's reusable next time
+  // via listCookieRefs() instead of needing to be re-uploaded.
+  saveCookieLabel?: string;
   musicFile: File | null;
   burnSubtitles: boolean;
   mixMusicVolume: number;
@@ -15,6 +22,10 @@ export interface CreateBatchParams {
   splitLongVideo: boolean;
   splitVideoMinutes: number;
   matchVoiceGender: boolean;
+  // Erases hard-coded source-language subtitles already burned into the
+  // source video's pixels (AI inpainting) before the new Vietnamese
+  // subtitles get burned in. Slow — off by default, see App.tsx.
+  removeHardsub: boolean;
   maleVoiceRefFile?: File | null;
   femaleVoiceRefFile?: File | null;
   // Single voice-clone reference for the whole video — used when
@@ -39,6 +50,7 @@ export interface CreateBatchParams {
   // Channel-name text burned into the top-left corner of the export.
   // Empty/omitted = no watermark.
   watermarkText?: string;
+  translateEngine?: string;
 }
 
 export interface CreateBatchResponse {
@@ -68,8 +80,15 @@ export async function createBatch(
   formData.append("split_long_video", String(params.splitLongVideo));
   formData.append("split_video_minutes", String(params.splitVideoMinutes));
   formData.append("match_voice_gender", String(params.matchVoiceGender));
+  formData.append("remove_hardsub", String(params.removeHardsub));
   if (params.cookieFile) {
     formData.append("cookie_file", params.cookieFile);
+  }
+  if (params.cookieRefId) {
+    formData.append("cookie_ref_id", params.cookieRefId);
+  }
+  if (params.saveCookieLabel?.trim()) {
+    formData.append("save_cookie_label", params.saveCookieLabel.trim());
   }
   if (params.musicFile) {
     formData.append("music_file", params.musicFile);
@@ -126,7 +145,7 @@ export async function createBatch(
 
 export interface DependencyItem {
   name: string;
-  kind: "binary" | "python_package";
+  kind: "binary" | "python_package" | "model";
   description: string;
   installed: boolean;
   detail: string | null;
@@ -240,6 +259,37 @@ export async function deleteAllFinishedJobs(): Promise<{
 export function downloadUrl(jobId: string, filename?: string): string {
   const query = filename ? `?file=${encodeURIComponent(filename)}` : "";
   return `${API_BASE}/api/jobs/${jobId}/download${query}`;
+}
+
+export interface CookieRef {
+  id: string;
+  platform: "douyin" | "bilibili";
+  label: string;
+  created_at: string;
+}
+
+/** Lists previously saved cookie files (see CreateBatchParams.saveCookieLabel),
+ * newest first. Pass `platform` to filter to one of "douyin" | "bilibili". */
+export async function listCookieRefs(
+  platform?: CookieRef["platform"],
+): Promise<CookieRef[]> {
+  const query = platform ? `?platform=${encodeURIComponent(platform)}` : "";
+  const res = await fetch(`${API_BASE}/api/cookie-refs${query}`);
+  if (!res.ok) {
+    throw new Error(await readErrorDetail(res));
+  }
+  const data = await res.json();
+  return data.items as CookieRef[];
+}
+
+export async function deleteCookieRef(refId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/cookie-refs/${encodeURIComponent(refId)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    throw new Error(await readErrorDetail(res));
+  }
 }
 
 export interface VoiceRef {
