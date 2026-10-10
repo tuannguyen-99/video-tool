@@ -15,7 +15,7 @@ import json
 import os
 import subprocess
 import wave
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import numpy as np
 
@@ -63,6 +63,84 @@ async def _run(cmd: List[str]) -> None:
         # Ghi full log ra file để debug, thay vì chỉ giữ 2000 ký tự cuối
         print("FFMPEG FULL STDERR:\n", err_text)
         raise FfmpegError(err_text[-4000:])  # tăng giới hạn hoặc bỏ hẳn slicing
+
+
+async def _run_with_progress(
+    cmd: List[str],
+    total_duration_s: float,
+    on_progress: Callable[[float], None],
+) -> None:
+    """Same as _run(), but reports 0-100 progress via `on_progress` while
+    ffmpeg runs, instead of only returning/raising once it's done.
+
+    Unlike VSR's tqdm bar (see subtitle_remover.py), ffmpeg's own
+    `-progress pipe:1` writes plain newline-terminated `key=value` lines
+    to stdout on every reporting interval (no "\r"-overwrite trickery to
+    handle) — one of the keys, `out_time_us`, is the position reached in
+    the OUTPUT file so far in MICROSECONDS, which divided by
+    `total_duration_s` gives a real, accurate percentage (not a proxy like
+    VSR's frame count vs wall-clock). Deliberately NOT using the
+    `out_time_ms` key despite the name suggesting milliseconds: it's a
+    long-known ffmpeg bug (ffmpeg trac #7345, opened 2018) that
+    `out_time_ms` actually also holds microseconds on many builds —
+    confirmed still true as of ffmpeg 5.1 in a 2022 report on that same
+    ticket — so trusting the name there would silently read the value
+    1000x too large. `out_time_us`'s name was never ambiguous and has
+    always meant microseconds, so it's the safe one to parse. `-nostats`
+    suppresses ffmpeg's OTHER, human-oriented progress line (the one
+    normally printed to stderr) so stderr stays clean for the actual
+    warnings/errors this function still needs to surface on failure.
+    """
+    cmd_with_progress = [*cmd[:1], "-nostats", "-progress", "pipe:1", *cmd[1:]]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd_with_progress,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    stderr_chunks: List[bytes] = []
+    last_reported = -1.0
+
+    async def _drain_stdout() -> None:
+        nonlocal last_reported
+        assert proc.stdout is not None
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                break
+            text = line.decode(errors="ignore").strip()
+            if text.startswith("out_time_us="):
+                try:
+                    out_time_us = int(text.split("=", 1)[1])
+                except ValueError:
+                    continue
+                if total_duration_s > 0:
+                    pct = min(100.0, (out_time_us / 1_000_000.0) / total_duration_s * 100.0)
+                    if pct != last_reported:
+                        last_reported = pct
+                        on_progress(pct)
+
+    async def _drain_stderr() -> None:
+        assert proc.stderr is not None
+        while True:
+            chunk = await proc.stderr.read(4096)
+            if not chunk:
+                break
+            stderr_chunks.append(chunk)
+
+    try:
+        await asyncio.gather(_drain_stdout(), _drain_stderr())
+        returncode = await proc.wait()
+    except asyncio.CancelledError:
+        proc.kill()
+        await proc.wait()
+        raise
+
+    if returncode != 0:
+        err_text = b"".join(stderr_chunks).decode(errors="ignore")
+        print("FFMPEG FULL STDERR:\n", err_text)
+        raise FfmpegError(err_text[-4000:])
 
 
 async def probe_duration(path: str) -> float:
@@ -260,6 +338,32 @@ _WATERMARK_FONT_COLOR = "white@0.55"
 _WATERMARK_BORDER_COLOR = "black@0.45"
 _WATERMARK_BORDER_WIDTH = 2
 
+# Burned-subtitle look: solid white box behind black text, instead of
+# libass's default (white text + thin black outline, no fill). These
+# source videos often already have Chinese text baked into the picture
+# (titles, captions, on-screen graphics) — a plain outline isn't enough
+# contrast for the translated Vietnamese line sitting on top of that, so
+# a fully opaque background box is used instead.
+#
+# ASS/libass colors are &HAABBGGRR (alpha first, then B/G/R — note the
+# byte order is reversed from the usual RGB), and alpha 00 = fully
+# opaque, FF = fully transparent (also backwards from typical alpha
+# conventions) — so opaque white is &H00FFFFFF and opaque black is
+# &H00000000.
+#
+# BorderStyle=3 is what actually turns "Outline" from a thin line around
+# the glyphs into a filled background box sized to the text — BorderStyle
+# 1 (the libass default) only ever draws a stroke, never a fill, no
+# matter how large Outline is set.
+_SUBTITLE_FORCE_STYLE = (
+    "BorderStyle=3"
+    ",Outline=4"       # box padding around the text, in script pixels
+    ",Shadow=0"
+    ",BackColour=&H00FFFFFF"     # box fill: opaque white
+    ",OutlineColour=&H00FFFFFF"  # matches BackColour so no stray border color shows
+    ",PrimaryColour=&H00000000"  # text: opaque black
+)
+
 
 async def export_final(
     video_path: str,
@@ -271,6 +375,7 @@ async def export_final(
     burn_subtitles: bool = True,
     resolution: Optional[str] = None,
     watermark_text: Optional[str] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
 ) -> str:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
@@ -316,7 +421,9 @@ async def export_final(
         # value (e.g. subtitles='path') trips newer ffmpeg's option parser
         # with "No option name near '<path>'".
         escaped = srt_path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        video_filters.append(f"subtitles=filename='{escaped}'")
+        video_filters.append(
+            f"subtitles=filename='{escaped}':force_style='{_SUBTITLE_FORCE_STYLE}'"
+        )
 
     cmd = ["ffmpeg", "-y", *inputs]
 
@@ -333,7 +440,11 @@ async def export_final(
     cmd += ["-map", audio_label if audio_label.startswith("[") else audio_label]
     cmd += ["-c:v", "libx264", "-c:a", "aac", "-shortest", out_path]
 
-    await _run(cmd)
+    if on_progress is not None:
+        total_duration_s = await probe_duration(video_path)
+        await _run_with_progress(cmd, total_duration_s, on_progress)
+    else:
+        await _run(cmd)
     return out_path
 
 

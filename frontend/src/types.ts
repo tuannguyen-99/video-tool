@@ -1,4 +1,4 @@
-export type Platform = "douyin" | "bilibili";
+export type Platform = "douyin" | "bilibili" | "local";
 
 export type JobStatus =
   | "pending"

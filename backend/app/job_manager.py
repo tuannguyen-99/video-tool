@@ -8,7 +8,7 @@ import uuid
 from typing import Callable, Dict, List, Optional
 
 from .models import JobState, JobStatus, OutputFile, Platform, StageName, VoiceGender
-from .pipeline import downloader, gender_detect, mux, srt_utils, transcribe, translate, tts
+from .pipeline import downloader, gender_detect, mux, srt_utils, subtitle_remover, transcribe, translate, tts
 from .storage import default_output_dir, new_job_workdir
 
 logger = logging.getLogger(__name__)
@@ -119,6 +119,7 @@ class JobManager:
         single_ref_path: Optional[str] = None,
         local_video_paths: Optional[List[str]] = None,
         watermark_text: Optional[str] = None,
+        remove_hardsub: bool = False,
     ) -> List[str]:
         job_ids = []
 
@@ -130,13 +131,16 @@ class JobManager:
                 platform=job_platform,
                 split_long_video=split_long_video,
                 match_voice_gender=match_voice_gender,
+                remove_hardsub=remove_hardsub,
             )
             args = (
                 display_label, cookie_path, output_dir, music_path,
                 source_lang, target_lang, burn_subtitles, mix_music_volume,
                 resolution, job_platform, split_long_video, split_video_minutes,
-                match_voice_gender, male_ref_path, female_ref_path, single_ref_path,
+                match_voice_gender, male_ref_path, female_ref_path,
+                single_ref_path,
                 local_video_path, watermark_text,
+                remove_hardsub,
             )
             self._job_args[job_id] = args
             self._job_original_args[job_id] = args
@@ -263,6 +267,7 @@ class JobManager:
         single_ref_path: Optional[str] = None,
         local_video_path: Optional[str] = None,
         watermark_text: Optional[str] = None,
+        remove_hardsub: bool = False,
     ) -> None:
         # new_job_workdir(job_id) must resolve to the SAME directory every
         # time for the same job_id (and must not wipe it), since a retry's
@@ -311,6 +316,37 @@ class JobManager:
                         self._fail(job_id, StageName.DOWNLOAD, e)
                         return
 
+            # Optional: erase hard-coded source-language subtitles the
+            # original uploader already burned into the pixels (VSR —
+            # separate from srt_utils/mux's OWN subtitle burning later,
+            # which adds the NEW Vietnamese subs — this just has to run
+            # before that, not before anything else). Reassigning
+            # video_path here means every later stage (audio extraction,
+            # mux.export_final's burn/watermark pass) transparently uses
+            # the cleaned file without any changes needed there. Slow (AI
+            # inpainting, frame-by-frame) — cached under its own key so a
+            # retry after a later-stage failure never redoes it.
+            if remove_hardsub:
+                clean_path = cache.get("video_path_clean")
+                if not clean_path or not os.path.exists(clean_path):
+                    try:
+                        self._update(job_id, stage=StageName.REMOVE_HARDSUB, progress=0.0)
+                        clean_path = os.path.join(work_dir, "video_nosub.mp4")
+                        removal_result = await subtitle_remover.remove_hardcoded_subtitles(
+                            video_path,
+                            clean_path,
+                            # VSR reports 0-100 (frames processed); JobState.progress
+                            # is 0-1 like every other stage's updates.
+                            on_progress=lambda pct: self._update(job_id, progress=pct / 100.0),
+                        )
+                        video_path = removal_result.video_path
+                        cache["video_path_clean"] = video_path
+                    except Exception as e:
+                        self._fail(job_id, StageName.REMOVE_HARDSUB, e)
+                        return
+                else:
+                    video_path = clean_path
+
             # Best-effort: translate the source title to Vietnamese for
             # display in the job list while later stages run. Never fails
             # the job — a title is a nice-to-have, not a requirement, and
@@ -328,9 +364,25 @@ class JobManager:
             segments = cache.get("segments")
             if segments is None:
                 try:
-                    self._update(job_id, stage=StageName.SPEECH_TO_TEXT)
+                    self._update(job_id, stage=StageName.SPEECH_TO_TEXT, progress=0.0)
                     await mux.extract_audio(video_path, audio_path)
-                    segments = await transcribe.transcribe(audio_path, source_lang)
+
+                    # Same reasoning as the translate stage above:
+                    # transcribe() runs the actual work inside
+                    # asyncio.to_thread() (see transcribe.py), so this
+                    # callback fires from that worker thread — route it
+                    # back via call_soon_threadsafe rather than touching
+                    # JobState inline.
+                    loop = asyncio.get_running_loop()
+
+                    def _on_transcribe_progress(pct: float) -> None:
+                        loop.call_soon_threadsafe(
+                            lambda: self._update(job_id, progress=pct / 100.0)
+                        )
+
+                    segments = await transcribe.transcribe(
+                        audio_path, source_lang, on_progress=_on_transcribe_progress
+                    )
                     cache["segments"] = segments
                 except Exception as e:
                     self._fail(job_id, StageName.SPEECH_TO_TEXT, e)
@@ -339,8 +391,26 @@ class JobManager:
             vi_segments = cache.get("vi_segments")
             if vi_segments is None:
                 try:
-                    self._update(job_id, stage=StageName.TRANSLATE)
-                    vi_segments = await translate.translate_segments(segments, source_lang, target_lang)
+                    self._update(job_id, stage=StageName.TRANSLATE, progress=0.0)
+
+                    # translate_segments() runs the actual translation loop
+                    # inside asyncio.to_thread() (see translate.py), so this
+                    # callback fires from THAT worker thread, not the event
+                    # loop thread running _run_job — touching JobState
+                    # directly from there would race with the loop. Route
+                    # it back via call_soon_threadsafe instead of calling
+                    # self._update() inline.
+                    loop = asyncio.get_running_loop()
+
+                    def _on_translate_progress(pct: float) -> None:
+                        loop.call_soon_threadsafe(
+                            lambda: self._update(job_id, progress=pct / 100.0)
+                        )
+
+                    vi_segments = await translate.translate_segments(
+                        segments, source_lang, target_lang,
+                        on_progress=_on_translate_progress,
+                    )
                     cache["vi_segments"] = vi_segments
                 except Exception as e:
                     self._fail(job_id, StageName.TRANSLATE, e)
@@ -419,6 +489,7 @@ class JobManager:
                         segment_ref_audio = [single_ref_path] * len(vi_segments)
 
                     clip_paths = []
+                    total_segments = len(vi_segments) or 1
                     for i, seg in enumerate(vi_segments):
                         clip_path = os.path.join(work_dir, f"tts_{i:04d}.wav")
                         # A previous attempt may have already synthesized this
@@ -430,8 +501,15 @@ class JobManager:
                         if not os.path.exists(clip_path):
                             voice = segment_voices[i] if i < len(segment_voices) else None
                             ref_audio = segment_ref_audio[i] if i < len(segment_ref_audio) else None
-                            await tts.synthesize(seg.text, clip_path, voice=voice, ref_audio=ref_audio)
+                            await tts.synthesize(
+                                seg.text, clip_path, voice=voice, ref_audio=ref_audio
+                            )
                         clip_paths.append(clip_path)
+                        # Real per-segment progress — each iteration here is
+                        # exactly one line of dialogue actually synthesized,
+                        # not a proxy like the frame-count/time-based
+                        # progress used for the AI-heavy stages elsewhere.
+                        self._update(job_id, progress=(i + 1) / total_segments)
 
                     total_duration = await mux.probe_duration(video_path)
                     tts_track_path = os.path.join(work_dir, "tts_track.wav")
@@ -451,6 +529,7 @@ class JobManager:
                 out_filename = f"{os.path.splitext(os.path.basename(video_path))[0]}_vietsub.mp4"
                 out_path = os.path.join(resolved_output_dir, out_filename)
 
+                self._update(job_id, progress=0.0)
                 await mux.export_final(
                     video_path=video_path,
                     tts_track_path=tts_track_path,
@@ -461,6 +540,7 @@ class JobManager:
                     burn_subtitles=burn_subtitles,
                     resolution=resolution,
                     watermark_text=watermark_text,
+                    on_progress=lambda pct: self._update(job_id, progress=pct / 100.0),
                 )
 
                 # Optional: cut the finished export into parts if it runs

@@ -8,13 +8,40 @@ Install (torch-free, runs v3 Turbo on CPU via ONNX Runtime):
 On a CUDA machine the SDK auto-switches to the PyTorch engine; the code
 below doesn't need to change either way.
 
-SDK shape used here (from the project's README):
+SDK shape used here (per vieneu's own docs — "Voice cloning" / "Save &
+reuse a cloned voice"):
     from vieneu import Vieneu
-    tts = Vieneu()                      # defaults to v3 Turbo
-    audio = tts.infer(text)             # default built-in voice
-    audio = tts.infer(text, voice=name) # named preset voice
-    audio = tts.infer(text, ref_audio=path, ref_text=optional_str)  # voice cloning
+    tts = Vieneu()                              # defaults to v3 Turbo
+    audio = tts.infer(text)                     # default built-in voice
+    audio = tts.infer(text, voice=name)         # named voice (preset OR
+                                                 # previously add_voice()'d)
+    tts.add_voice(name, ref_audio_path, denoise=True)  # enroll a reference
+                                                 # clip once: cleans it up
+                                                 # (denoise, trim to <=8s)
+                                                 # and extracts its speaker
+                                                 # profile
     tts.save(audio, "output.wav")
+
+Voice cloning and preset voices share the exact same call shape here —
+infer(text, voice=<name>) — because add_voice() turns a reference clip
+into a named voice usable exactly like a built-in preset. This is
+deliberately simpler than an earlier version of this file, which passed
+ref_audio/ref_text into infer() directly per call: that required a
+non-obvious ref_text alongside ref_audio on some vieneu backends, which
+needed auto-transcribing every reference clip just to get a value for it.
+Per vieneu's docs, none of that was ever necessary — add_voice() is the
+documented way to clone a voice and reuse it, and needs no ref_text at
+all.
+
+Enrollment (add_voice) happens lazily, on first use of a given ref_audio
+path, and is cached in-memory for the life of the process — denoise +
+speaker-profile extraction is too expensive to redo on every line when a
+job reuses the same one or two reference clips across every segment. Not
+persisted via vieneu's own save_voices(): voice_refs.py already handles
+cross-session reuse of the underlying audio clips on our side, so
+re-enrolling once per process start (rather than once ever) keeps this
+file self-contained and never dependent on vieneu's own voices file being
+present or in sync with what voice_refs.py has on disk.
 
 Two independent ways to pick a non-default voice, both optional and
 resolved per-call rather than only from global env config:
@@ -36,10 +63,10 @@ resolved per-call rather than only from global env config:
    different voices without touching server config.
 
 Priority per segment, highest first (see _synthesize_sync):
-  a) ref_audio passed to synthesize() for this call (per-job cloned voice,
-     gender-matched)
+  a) ref_audio passed to synthesize() for this call (per-job cloned
+     voice, gender-matched) — enrolled via add_voice() on first use.
   b) VIENEU_REF_AUDIO env var (server-wide cloned voice, if configured —
-     kept for backwards compatibility with single-voice deployments)
+     kept for backwards compatibility with single-voice deployments).
   c) voice passed to synthesize() for this call (per-job gender-matched
      preset)
   d) VIENEU_VOICE env var (server-wide default preset)
@@ -50,6 +77,8 @@ from __future__ import annotations
 import asyncio
 import os
 from typing import Literal, Optional
+
+from .transcribe import strip_annotation_emoji
 
 Gender = Literal["male", "female"]
 
@@ -110,6 +139,49 @@ def resolve_ref_audio_for_gender(
     return None
 
 
+# ref_audio paths already enrolled via add_voice() in this process. Keyed
+# by the path itself, since the same reference clip (a batch's uploaded
+# male/female sample, or a saved voice_refs.py clip) gets reused across
+# every matching segment in a job, and add_voice()'s denoise + profile
+# extraction is far too expensive to redo per line.
+_enrolled_ref_voices: set[str] = set()
+
+
+def _voice_name_for_ref(ref_audio: str) -> str:
+    """Stable per-clip name to enroll/reuse via vieneu's add_voice()/
+    infer(voice=...). Prefixed so it can never collide with a real preset
+    name configured via VIENEU_VOICE_MALE/VIENEU_VOICE_FEMALE/VIENEU_VOICE."""
+    return f"__ref_clone__:{ref_audio}"
+
+
+def _ensure_ref_voice_enrolled(engine, ref_audio: str) -> str:
+    name = _voice_name_for_ref(ref_audio)
+    if ref_audio not in _enrolled_ref_voices:
+        if not hasattr(engine, "add_voice"):
+            # Per vieneu's own docs: "denoise, add_voice, and cloning
+            # require the PyTorch (GPU) engine; built-in voices work
+            # everywhere." A torch-free/CPU-only install (or an older
+            # vieneu version predating add_voice) won't have this method
+            # at all — surfaced here as a clear, actionable error instead
+            # of a bare AttributeError deep in engine.infer().
+            raise RuntimeError(
+                f"Bản 'vieneu' đang cài (engine={type(engine).__name__}) không có "
+                f"add_voice() — tính năng clone giọng cần bản vieneu đủ mới và/hoặc "
+                f"engine PyTorch (pip install \"vieneu[gpu]\"), theo README của "
+                f"package. Chạy `pip show vieneu` và `pip install --upgrade vieneu` "
+                f"(hoặc `--upgrade \"vieneu[gpu]\"`) rồi thử lại."
+            )
+        # denoise=True is documented as the default, but pass it
+        # explicitly with a fallback in case an older/newer add_voice
+        # signature doesn't accept the kwarg.
+        try:
+            engine.add_voice(name, ref_audio, denoise=True)
+        except TypeError:
+            engine.add_voice(name, ref_audio)
+        _enrolled_ref_voices.add(ref_audio)
+    return name
+
+
 def _write_silence(path: str, duration_s: float) -> None:
     import subprocess
 
@@ -129,8 +201,14 @@ def _synthesize_sync(
     out_wav_path: str,
     voice: str | None,
     ref_audio: str | None,
-    ref_text: str | None,
 ) -> None:
+    # transcribe.py already strips these at the source, but text can
+    # arrive here after passing through translation (or any other step)
+    # that might reintroduce/preserve stray symbols — a chunk that's
+    # only emoji gives vieneu's tokenizer nothing to synthesize, which
+    # surfaces downstream as "No valid speech tokens found in the
+    # output." rather than as an empty-text case already handled below.
+    text = strip_annotation_emoji(text)
     if not text.strip():
         # Keep downstream muxing/timing intact even for empty segments
         _write_silence(out_wav_path, duration_s=0.3)
@@ -142,18 +220,16 @@ def _synthesize_sync(
     # uploaded clip) takes priority over everything else — it's the most
     # specific choice available for this exact segment.
     if ref_audio:
-        audio = engine.infer(text, ref_audio=ref_audio, ref_text=ref_text or None)
+        voice_name = _ensure_ref_voice_enrolled(engine, ref_audio)
+        audio = engine.infer(text, voice=voice_name)
     else:
         # (b) Server-wide cloned reference, kept for backwards
         # compatibility with single-voice deployments that configure this
         # instead of passing ref_audio per call.
         env_ref_audio = os.environ.get("VIENEU_REF_AUDIO")
         if env_ref_audio:
-            audio = engine.infer(
-                text,
-                ref_audio=env_ref_audio,
-                ref_text=os.environ.get("VIENEU_REF_TEXT") or None,
-            )
+            voice_name = _ensure_ref_voice_enrolled(engine, env_ref_audio)
+            audio = engine.infer(text, voice=voice_name)
         elif voice:
             # (c) Per-call gender-matched preset voice.
             audio = engine.infer(text, voice=voice)
@@ -170,7 +246,6 @@ async def synthesize(
     out_wav_path: str,
     voice: str | None = None,
     ref_audio: str | None = None,
-    ref_text: str | None = None,
 ) -> None:
     """Synthesizes one line of text to a wav file.
 
@@ -180,4 +255,4 @@ async def synthesize(
     both None to use whatever server-wide default is configured (see the
     priority order in this module's docstring).
     """
-    await asyncio.to_thread(_synthesize_sync, text, out_wav_path, voice, ref_audio, ref_text)
+    await asyncio.to_thread(_synthesize_sync, text, out_wav_path, voice, ref_audio)
